@@ -1,0 +1,17 @@
+[project]
+name = "our-llm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "regex>=2026.7.19",
+    "tqdm>=4.70.0",
+]
+
+[project.scripts]
+our-llm = "our_llm:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
