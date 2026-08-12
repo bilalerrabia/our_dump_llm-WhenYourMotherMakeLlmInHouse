@@ -92,7 +92,7 @@ def main():
     except IOError as e:
         print(f"Error reading file {data_file}: {e}")
         return
-    num_merges = len(data_str) // 34 # 3% of the training data
+    num_merges = len(data_str) // 10 # 10% of the training data
     print(f"Original text length: {len(data_str)} characters")
 
     # 2. Initialize Tokenizer

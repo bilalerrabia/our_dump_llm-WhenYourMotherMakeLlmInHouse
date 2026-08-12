@@ -1,6 +1,14 @@
 video 12.                                                   done
 data loader.                                                done
-video 14.
-coding the simplified attention.
+video 14.                                                   done
+coding the simplified attention.                            done
+simplified attention class.
+
 use the position embedding from attention is all you need.
 data_test to dir/ not just one file.
+        -> embedding hold the meaning about the words, but the attention hold the relations between the words.
+        -> attention score calculate by the dot prodect.
+        -> Attention weights = softmax(attention scores).
+        -> context vectore(qi) = somme(for token in tokens (attention score(qi, xi) * embedding(xi)))
+search about the torch implimentation of softmax.
+qkv_bias
