@@ -60,3 +60,11 @@ class MultiHeadAttention(nn.Module):
         context_vec = self.out_proj(context_vec) # optional projection
 
         return context_vec
+
+torch.manual_seed(123)
+batch_size, context_length, d_in = batch.shape
+d_out = 2
+mha = MultiHeadAttention(d_in, d_out, context_length, 0.0, num_heads=2)
+context_vecs = mha(batch)
+print(context_vecs)
+print("context_vecs.shape:", context_vecs.shape)

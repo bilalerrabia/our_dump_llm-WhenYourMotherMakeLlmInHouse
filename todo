@@ -1,8 +1,6 @@
-video 12.                                                   done
-data loader.                                                done
-video 14.                                                   done
-coding the simplified attention.                            done
-simplified attention class.
+test callme with gpt-2.
+optimasion callme.
+run callme with ourdump llm.
 
 use the position embedding from attention is all you need.
 data_test to dir/ not just one file.
@@ -11,4 +9,6 @@ data_test to dir/ not just one file.
         -> Attention weights = softmax(attention scores).
         -> context vectore(qi) = somme(for token in tokens (attention score(qi, xi) * embedding(xi)))
 search about the torch implimentation of softmax.
-qkv_bias
+qkv_bias.
+type hints.
+make lint-strict.
