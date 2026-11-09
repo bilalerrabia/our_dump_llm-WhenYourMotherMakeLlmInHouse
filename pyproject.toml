@@ -5,6 +5,7 @@ description = "A GPT built from scratch: corpus -> BPE -> GPT -> training -> sam
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "fire>=0.7.1",
     "numpy>=2.5.4",
     "regex>=2026.7.19",
     "torch>=2.14.1",

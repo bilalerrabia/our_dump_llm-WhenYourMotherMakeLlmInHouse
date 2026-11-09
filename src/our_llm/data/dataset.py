@@ -17,7 +17,6 @@ Two ideas carry the whole file:
 from __future__ import annotations
 
 import os
-import random
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -27,6 +26,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from our_llm.config import DataConfig
 from our_llm.data.corpus import Corpus, read_corpus
+from our_llm.data.split import split_documents
 from our_llm.data.tokens import (
     check_compatible,
     encode_corpus,
@@ -87,27 +87,9 @@ class GPTDataset(Dataset):
 
 # --- splitting --------------------------------------------------------------
 
-
-def split_documents(
-    n_documents: int, val_ratio: float = 0.10, seed: int = 123
-) -> tuple[list[int], list[int]]:
-    """Shuffle document indices and cut ``val_ratio`` of them off the end.
-
-    Returns ``(train_indices, val_indices)``: disjoint, sorted, and deterministic
-    for a given ``seed``. With fewer than two documents there is nothing to
-    validate on, so everything stays in training.
-    """
-    if not 0.0 <= val_ratio < 1.0:
-        raise ValueError("val_ratio must be in [0, 1)")
-
-    indices = list(range(n_documents))
-    if n_documents < 2 or val_ratio == 0.0:
-        return indices, []
-
-    random.Random(seed).shuffle(indices)
-    n_val = max(1, round(n_documents * val_ratio))
-    n_val = min(n_val, n_documents - 1)  # never hand everything to validation
-    return sorted(indices[n_val:]), sorted(indices[:n_val])
+# `split_documents` lives in `data/split.py` (pure Python) so the tokenizer stage
+# can report the split without importing torch; it is imported above and
+# re-exported from here because this is where callers look for it.
 
 
 def gather(ids: np.ndarray, spans: Sequence[Span], document_indices: Sequence[int]) -> np.ndarray:

@@ -24,8 +24,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done.
 | Training loop | `[ ]` | — | only in `parts/LLM Pretraining.ipynb` (M4) |
 | Checkpointing | `[ ]` | — | — (M4) |
 | Sampling | `[ ]` | — | only in notebooks (greedy + temperature) (M5) |
-| CLI / package | `[~]` | `our_llm/cli.py` | `tokenize` writes the token cache; `train`/`sample`/`eval` are stubs |
-| Tests | `[~]` | `tests/` | **211 passing**; tokenizer/corpus/config/tokens/dataset/model/legacy + old pure-Python suites |
+| CLI / package | `[x]` | `our_llm/app.py` + `our_llm/tasks/` | fire commands `tokenize|train|eval|sample|pipeline`; `pipeline` runs all four in order |
+| Tests | `[~]` | `tests/` | **260 passing**; tokenizer/corpus/config/tokens/dataset/model/tasks/app/legacy + old pure-Python suites |
 | Docs / lint | `[ ]` | `README.md` | empty; no ruff/mypy/CI (M6) |
 
 ---
@@ -183,6 +183,29 @@ few cells we actually port into `notes/` so the reasoning survives outside a 500
 **Why.** These four are the places where a checkpoint silently changes meaning (or a param count
 silently drifts) if done differently. Tests pin all of them in `tests/test_model.py`.
 
+### D18 — CLI: `fire` + one module per stage + a `pipeline` command
+**Decision.**
+- **`fire` instead of `argparse`.** Each stage is a plain function; `OurLLM` in `app.py` exposes it
+  as a Fire command. Signatures (types + defaults + docstring `Args:`) *are* the CLI, so there is
+  no second place to update when a parameter is added. `--num-merges` == `--num_merges`.
+- **One file per stage** in `src/our_llm/tasks/` (`tokenize.py`, `train.py`, `evaluate.py`,
+  `sample.py`) plus `pipeline.py` that chains them. `tasks/__init__.py` re-exports all of them and
+  a `COMMANDS` dict; `app.py` is the only Fire-aware file, `main.py` is 8 lines.
+- **`pipeline()` = tokenize → train → eval → sample**, passing each stage's output to the next
+  (the token file, then the checkpoint). Three statuses: `ok`, `skipped` (stage raises
+  `NotImplementedError` — its milestone has not landed), `failed` (anything else, stops the run).
+  `--stages all|tokenize,train` selects a subset, always executed in pipeline order.
+- **Flags are validated before Fire runs.** Fire silently drops an unknown `--flag` and runs with
+  defaults, which for `train` would start a long run at the wrong settings; `app.validate_flags`
+  turns that into an error with a "did you mean" hint.
+- **`cli.py` (argparse) is deleted**, not kept in parallel — two CLIs drift.
+**Why.** The pipeline stages must be callable from a notebook, a test and the shell, and adding a
+flag should be a one-line change. The `skipped` status is what makes the entry point usable during
+M4/M5: `pipeline` works today and will keep working as each stage gets its body.
+**Also.** `data/split.py` was extracted from `data/dataset.py` (and `data/__init__.py` resolves the
+torch-backed names lazily) so `our_llm.tasks` and `our-llm tokenize` no longer import torch:
+`tokenize` startup dropped the ~1.5 s torch import.
+
 ---
 
 ## 2. Target file layout
@@ -191,13 +214,20 @@ silently drifts) if done differently. Tests pin all of them in `tests/test_model
 src/our_llm/
 ├── __init__.py          # public API: GPTModel, GPTConfig, train, generate
 ├── config.py            # dataclasses + presets (debug/tiny/gpt2-small)
-├── cli.py               # argparse: tokenize | train | sample | eval
+├── app.py               # fire component: tokenize | train | eval | sample | pipeline
+├── tasks/               # one module per stage, no torch
+│   ├── tokenize.py      # corpus -> BPE -> .bin + split summary  (done)
+│   ├── train.py         # pretrain                                         (M4)
+│   ├── evaluate.py      # loss / perplexity                                (M4)
+│   ├── sample.py        # generate()                                       (M5)
+│   └── pipeline.py      # runs the stages above in order
 ├── utils.py             # device, seed_everything, count_parameters, logging
 ├── tokenizer/
 │   ├── bpe.py           # train / fast encode / decode  (from src/tokenizer.py)
 │   └── special.py       # <|endoftext|>, <|pad|>
 ├── data/
 │   ├── corpus.py        # find files (ext-filtered), read, dedupe, doc boundaries
+│   ├── split.py         # doc-level train/val split (pure Python, torch-free)
 │   ├── tokens.py        # encode-once .bin writer + memmap reader
 │   └── dataset.py       # torch Dataset (sliding window) + train/val dataloaders
 ├── model/
@@ -257,11 +287,14 @@ tests/                   # mirrors src tree
 - [x] Tests: 32 new in `tests/test_model.py` (211 passing total)
 
 ### M4 — Loss + loop (2 days)
+- [x] `tasks/train.py` + `tasks/evaluate.py` exist with the final signatures (the CLI and
+      `pipeline` already call them; they raise `NotImplementedError` until the loop lands)
 - [ ] `loss.py`: cross-entropy + perplexity + `calc_loss_loader`
 - [ ] `loop.py`: `train_model`, `evaluate_model`, AdamW (decay only 2-D), warmup+cosine, grad clip, CSV log
-- [ ] `checkpoint.py`: save/load incl. vocab hash assert
+- [ ] `checkpoint.py`: save/load incl. vocab hash assert — `train` returns the checkpoint path,
+      which is what `pipeline` hands to `eval`/`sample`
 - [ ] **Overfit-one-batch test** green at `debug` preset
-- [ ] `our-llm train` end-to-end on `data/dd.txt`
+- [ ] `our-llm train` end-to-end on `data/dd.txt` (`make pipeline STAGES=all`)
 
 ### M5 — Pretrain + sample (1–2 days)
 - [ ] `generate.py`: greedy / temperature / top-k / top-p / repetition penalty

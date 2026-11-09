@@ -31,6 +31,6 @@ __all__ = [
 
 def main() -> None:
     """Console-script entry point (`uv run our-llm ...`)."""
-    from our_llm.cli import main as cli_main
+    from our_llm.app import main as cli_main
 
-    raise SystemExit(cli_main())
+    cli_main()

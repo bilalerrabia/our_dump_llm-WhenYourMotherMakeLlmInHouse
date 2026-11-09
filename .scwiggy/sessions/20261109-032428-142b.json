@@ -1,0 +1,55 @@
+{
+ "id": "20261109-032428-142b",
+ "saved_at": "2026-11-09T03:24:58",
+ "model": "deepseek/deepseek-v4.1-flash",
+ "total_in": 0,
+ "total_out": 0,
+ "turns": 3,
+ "stats": {
+  "api_calls": 0,
+  "latency_sum": 0.0,
+  "cached": 0,
+  "cost": 0.0,
+  "turns": [
+   {
+    "turn": 1,
+    "in": 0,
+    "out": 0,
+    "cost": 0.0,
+    "secs": 1.36,
+    "tools": 0
+   },
+   {
+    "turn": 2,
+    "in": 0,
+    "out": 0,
+    "cost": 0.0,
+    "secs": 0.26,
+    "tools": 0
+   },
+   {
+    "turn": 3,
+    "in": 0,
+    "out": 0,
+    "cost": 0.0,
+    "secs": 0.47,
+    "tools": 0
+   }
+  ],
+  "tools": {}
+ },
+ "messages": [
+  {
+   "role": "user",
+   "content": "continue on what you pausse before the vm crash"
+  },
+  {
+   "role": "user",
+   "content": "continue on what you pausse before the vm crash"
+  },
+  {
+   "role": "user",
+   "content": "continue on what you pausse before the vm crash"
+  }
+ ]
+}

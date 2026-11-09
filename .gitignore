@@ -2,7 +2,6 @@ __pycache__
 *.py[cod]
 .venv
 .env
-.scwiggy/
 parts/
 readme.secret.md
 to_fix.txt

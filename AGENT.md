@@ -13,12 +13,36 @@ the pure-Python *reference* implementations, kept and tested but no longer used
 by the pipeline (ROADMAP D2).
 
 ## Layout — new package (`src/our_llm/`)
-- `__init__.py` — public API + `main()` for the `our-llm` console script.
+- `__init__.py` — public API + `main()` for the `our-llm` console script
+  (delegates to `our_llm.app.main`).
 - `config.py` — frozen dataclasses `GPTConfig` / `DataConfig` / `TrainConfig`,
   presets `debug` / `tiny` / `gpt2-small`, and `GPTConfig.num_parameters()`
   (no torch needed). Pinned: tiny **13,039,872**, debug 1,078,400,
   gpt2-small 124,412,160 (tied).
-- `cli.py` — argparse subcommands `tokenize` (works), `train`/`sample`/`eval` (stubs).
+- `app.py` — the **fire** CLI. `class OurLLM` maps each name in `tasks.COMMANDS`
+  to a `staticmethod`; `main(argv)` validates flags then calls `fire.Fire`.
+  Fire silently ignores an unknown `--flag`, so `validate_flags` (using
+  `inspect.signature`, accepting `--num_merges`/`--num-merges`/`--nummerges` and
+  `--nofoo` for bools) turns a typo into an error with a "did you mean" hint.
+  Catches `NotImplementedError` -> "not implemented yet" + exit 1, and
+  `ValueError`/`FileNotFoundError` -> "error: ..." + exit 1. Fire's own flags go
+  after `--` (`main.py tokenize -- --help`); it prints help to **stderr**.
+- `tasks/` — **one module per pipeline stage**, all torch-free:
+  - `tokenize.py` — done. `pick_tokenizer()` (explicit -> retrain -> corpus cache ->
+    legacy -> train; the legacy file is only reused when `num_merges` matches) and
+    `tokenize(...)` -> `TokenizeResult` (vocab/n_tokens/split/token_file/reused).
+  - `train.py` — M4 stub: signature only, raises `NotImplementedError`.
+  - `evaluate.py` — M4 stub (loss/perplexity).
+  - `sample.py` — M5 stub (greedy/temperature/top-k/top-p/repetition penalty).
+  - `pipeline.py` — `pipeline()` runs tokenize -> train -> eval -> sample, passing
+    the token file then the checkpoint along; returns `PipelineReport` with one
+    `StageOutcome` per stage: `ok` / `skipped` (stage raised `NotImplementedError`)
+    / `failed` (stop + `SystemExit(1)`). `parse_stages("all" | "tokenize,train")`
+    always re-orders into pipeline order. Extra flags: `--stages`, `--checkpoint`,
+    `--prompt`, `--run-dir`, `--cache-dir`, `--processed-dir`, `--epochs`,
+    `--quiet`, `--trace`.
+  - `__init__.py` — re-exports every stage + `COMMANDS` dict (single source of truth
+    for the CLI) and `STAGES`/`PipelineReport`/`StageOutcome`/`TokenizeResult`.
 - `utils.py` — `get_device`, `seed_everything`, `count_parameters`, `human_count`.
 - `tokenizer/special.py` — **frozen id layout**: 0-255 bytes, 256 `<|endoftext|>`,
   257 `<|pad|>`, 258+ merges. `vocab_size = 258 + len(merges)`.
@@ -32,16 +56,23 @@ by the pipeline (ROADMAP D2).
   `Corpus` exposes three hashes: `fingerprint` (= `files_hash`, raw file text -- keys the
   **vocab** cache), and `structure_fingerprint` (document boundaries -- keys the **token
   file**), because the same characters laid out as 1 doc vs 857 docs are different tokens.
+- `data/split.py` — `split_documents(n_documents, val_ratio, seed)` (seeded shuffle,
+  90/10, never empties train). Extracted from `data/dataset.py` **so the tokenize
+  stage does not import torch**; `dataset.py` re-imports it for compatibility.
+- `data/__init__.py` — `corpus`/`split`/`tokens` eagerly, the torch-backed names
+  (`prepare`, `build_loaders`, `GPTDataset`, ...) lazily via PEP 562 `__getattr__`:
+  `from our_llm.data import prepare` still works, `import our_llm.tasks` does not
+  load torch (~1.5 s saved).
 - `data/tokens.py` — M2a. `encode_corpus` (per document, trailing `<|endoftext|>`) ->
   `uint16` `.bin` (no header, `np.memmap`-able) + `.meta.json` sidecar: version,
   corpus/structure/vocab fingerprints, dtype, n_tokens, doc_spans (one line), doc_source
   index, eot_id. `open_tokens` (memmap|read), `load_meta`, `check_compatible`
   (raises on stale version / different vocabulary), `token_file_path`, `tokens_dtype`.
 - `data/dataset.py` — M2b. `GPTDataset` (sliding window, `stride=None` -> context length,
-  targets = inputs shifted by 1, `torch.long`), `split_documents` (seeded shuffle, 90/10,
-  never empties train), `gather`, `prepare()` (corpus -> cached token file -> train/val
-  arrays), `make_loader` / `build_loaders` (seeded `torch.Generator`; raises with a reason
-  on an empty stream, torch itself refuses). `PreparedData` carries ids, docs, meta, tokenizer.
+  targets = inputs shifted by 1, `torch.long`), `gather`, `prepare()` (corpus -> cached
+  token file -> train/val arrays), `make_loader` / `build_loaders` (seeded
+  `torch.Generator`; raises with a reason on an empty stream, torch itself refuses).
+  `PreparedData` carries ids, docs, meta, tokenizer.
 - `model/layers.py` — M3. Hand-written `LayerNorm` (`scale`/`shift`, `unbiased=False`) and
   tanh `GELU`, `FeedForward(emb_dim, expand=4, drop_rate=0.0)`; parity-tested against
   `nn.LayerNorm` / `nn.GELU(approximate="tanh")` at 1e-6.
@@ -70,20 +101,28 @@ by the pipeline (ROADMAP D2).
 - `src/LLM_arch/llm_class.py` — `DummyGPTModel`, `LayerNorm`, `GELU`, `FeedForward`,
   `TransformerBlock` + GPT-2 124M cfg. **Superseded by `our_llm/model/` (M3)**; kept as the
   reference the new code was ported from.
-- `main.py` — 5-line alias forwarding to the CLI (no args -> `tokenize`).
+- `main.py` — 8-line entry point: `from our_llm.app import main` + `main()`.
+  No `sys.path` hack, no argparse; `python main.py` prints the Fire command list.
 
 ## Commands
-- `uv run our-llm tokenize` — corpus -> BPE cache -> `data/processed/tokens-*.bin` + meta,
-  prints token count and the train/val split (0.1 s; 96,061 tokens, 857 docs, 771/86 split).
+- `uv run our-llm tokenize` (= `uv run python main.py tokenize`) — corpus -> BPE
+  cache -> `data/processed/tokens-*.bin` + meta, prints token count and the
+  train/val split (0.1 s; 96,061 tokens, 857 docs, 771/86 split).
   Flags: `--granularity file|paragraph`, `--val-ratio`, `--processed-dir`, `--force`,
-  `--no-tokens`, `--retrain`, `--vocab-cache`, `--cache-dir`, `--num-merges`.
+  `--nowrite` (was `--no-tokens`), `--retrain`, `--vocab-cache`, `--cache-dir`,
+  `--num-merges`, `--quiet`.
+- `uv run our-llm pipeline` — every stage in order (today: tokenize ok,
+  train/eval/sample `skipped` with the reason). `--stages tokenize,train`,
+  `--preset`, `--checkpoint`, `--prompt`, `--run-dir`, `--quiet`, `--trace`.
 - `uv run our-llm tokenize --retrain` — full retrain, ~68 s for 14,970 merges
-- `make` (= sync + tokenize), `make test`, `make overfit` (M4), `make lint|fmt` (needs ruff)
-- `uv run pytest -q` — **211 passing** (test_config / test_tokenizer_v2 / test_corpus /
-  test_tokens / test_dataset / test_model + the legacy suites); full suite ~1.5 s
+- `make` (= sync + tokenize), `make pipeline [STAGES=tokenize]`, `make test`,
+  `make overfit` (M4), `make lint|fmt` (needs ruff)
+- `uv run pytest -q` — **260 passing** (test_config / test_tokenizer_v2 / test_corpus /
+  test_tokens / test_dataset / test_model / test_tasks / test_app + the legacy
+  suites); full suite ~1.7 s
 - Real data end-to-end: `build_loaders(DataConfig(), context_length=256)` -> 335 train
   windows / 41 batches, 39 val windows / 5 batches, 0.015 s startup
-- Deps: numpy, regex, torch, tqdm (+ pytest). Python >= 3.14, managed by uv.
+- Deps: **fire**, numpy, regex, torch, tqdm (+ pytest). Python >= 3.14, managed by uv.
 - `tiktoken`, `matplotlib`, `pandas`, `ruff`, `mypy` are **not installed**.
 
 ## Git workflow
@@ -151,9 +190,14 @@ val 9.856->6.372 (overfits a 20k-char story).
   ignores it (it was double-loading the book before).
 - `parts/` is **gitignored** — notebook knowledge must be copied into `notes/` to survive.
 - `python 3.14` + `torch` — if an op misbehaves, 3.14 is the first suspect.
-- `ROADMAP.md` holds the full pipeline plan + 17 architecture decisions (D1-D17) with rationale,
+- `ROADMAP.md` holds the full pipeline plan + 18 architecture decisions (D1-D18) with rationale,
   and the M0-M7 milestones (M0-M3 done; M4 = loss + training loop is next). Change a decision by
-  editing that table, not in code.
+  editing that table, not in code. **D18** = fire CLI + `tasks/` (one module per stage) + the
+  `pipeline` command.
+- **Adding a stage method**: write the function in `tasks/<name>.py` (signature + `Args:`
+  docstring is the CLI), import it in `tasks/__init__.py`, add it to `COMMANDS` **and** to
+  `OurLLM` in `app.py` (a test asserts the two match), and to `STAGES` if `pipeline` should run
+  it. Never put logic in `app.py` or `main.py`.
 - `.env` holds an API key — never commit it.
 - Style: type hints, module docstrings, small pure functions. `todo.txt` tracks next steps
   (GELU derivative, lint-strict, README from notebook notes).

@@ -1,21 +1,22 @@
-"""Entry point — an alias for the CLI.
+"""Entry point — `python main.py <command>` driven by python-fire.
 
-The real pipeline lives in the `our_llm` package:
+    uv run python main.py --help
+    uv run python main.py tokenize --corpus data --num-merges 14970
+    uv run python main.py train --preset tiny              # M4
+    uv run python main.py sample --ckpt runs/best.pt       # M5
+    uv run python main.py pipeline                         # everything, in order
 
-    uv run our-llm tokenize      # corpus -> BPE -> tokens
-    uv run our-llm train         # pretrain the GPT (ROADMAP M4)
-    uv run our-llm sample        # generate text  (ROADMAP M5)
-    uv run pytest -q             # tests
+Nothing pipeline-shaped lives here: each stage is a module under
+``src/our_llm/tasks/`` (`tokenize.py`, `train.py`, `evaluate.py`, `sample.py`)
+and ``tasks/pipeline.py`` chains them. This file only hands the imported
+functions to Fire (see ``our_llm/app.py``), so the same commands are available
+from the console script: `uv run our-llm pipeline`.
 
-`python main.py` is kept for muscle memory; it forwards to `our-llm`.
-The original pure-Python walkthrough now lives in
+The original pure-Python walkthrough lives in
 ``examples/pure_python/pipeline_demo.py``.
 """
 
-from our_llm.cli import main
+from our_llm.app import main
 
 if __name__ == "__main__":
-    import sys
-
-    # No arguments -> the first pipeline stage, so `python main.py` still shows something.
-    raise SystemExit(main(sys.argv[1:] or ["tokenize"]))
+    main()

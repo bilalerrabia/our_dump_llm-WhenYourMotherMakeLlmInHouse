@@ -1,4 +1,4 @@
-.PHONY: all sync tokenize train sample test lint fmt
+.PHONY: all sync tokenize pipeline train sample test lint fmt
 
 all: sync
 	@uv run our-llm tokenize
@@ -6,9 +6,14 @@ all: sync
 sync:
 	@uv sync --quiet
 
-# Corpus -> BPE vocabulary -> encoded token count (works today)
+# Corpus -> BPE vocabulary -> encoded tokens (works today)
 tokenize:
 	@uv run our-llm tokenize
+
+# Every stage in order: tokenize -> train -> eval -> sample
+# (STAGES=tokenize to run just one, e.g. `make pipeline STAGES=tokenize`)
+pipeline:
+	@uv run our-llm pipeline --stages $${STAGES:-all} --preset $${PRESET:-tiny}
 
 # Pretrain the GPT (ROADMAP M4) / generate text (M5)
 train:
