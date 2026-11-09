@@ -1,79 +1,56 @@
+"""Simplified attention: dot products -> softmax -> context vectors.
+
+Teaching demo (nothing runs at import). Vocabulary: "Your journey starts with
+one step", each token a 3-dim vector.
+
+Run: uv run python src/attentions/simplified_attention.py
+"""
+
 import torch
 
-inputs = torch.tensor(
-  [[0.43, 0.15, 0.89], # Your     (x^1)
-   [0.55, 0.87, 0.66], # journey  (x^2)
-   [0.57, 0.85, 0.64], # starts   (x^3)
-   [0.22, 0.58, 0.33], # with     (x^4)
-   [0.77, 0.25, 0.10], # one      (x^5)
-   [0.05, 0.80, 0.55]] # step     (x^6)
+INPUTS = torch.tensor(
+    [
+        [0.43, 0.15, 0.89],  # Your     (x^1)
+        [0.55, 0.87, 0.66],  # journey  (x^2)
+        [0.57, 0.85, 0.64],  # starts   (x^3)
+        [0.22, 0.58, 0.33],  # with     (x^4)
+        [0.77, 0.25, 0.10],  # one      (x^5)
+        [0.05, 0.80, 0.55],  # step     (x^6)
+    ]
 )
+WORDS = ["Your", "journey", "starts", "with", "one", "step"]
 
-query = inputs[1]  # 2nd input token is the query
 
-attn_scores_2 = torch.empty(inputs.shape[0])
-for i, x_i in enumerate(inputs):
-    attn_scores_2[i] = torch.dot(x_i, query) # dot product (transpose not necessary here since they are 1-dim vectors)
-
-print(attn_scores_2)
-
-attn_weights_2_tmp = attn_scores_2 / attn_scores_2.sum()
-
-print("Attention weights:", attn_weights_2_tmp)
-print("Sum:", attn_weights_2_tmp.sum())
-
-def softmax_naive(x):
+def softmax_naive(x: torch.Tensor) -> torch.Tensor:
+    """Softmax without the max-subtraction trick (overflow-prone, educational)."""
     return torch.exp(x) / torch.exp(x).sum(dim=0)
 
-attn_weights_2_naive = softmax_naive(attn_scores_2)
 
-print("Attention weights:", attn_weights_2_naive)
-print("Sum:", attn_weights_2_naive.sum())
+def main() -> None:
+    # 1. One query against every input: attention *scores* are dot products.
+    query = INPUTS[1]  # "journey"
+    scores = torch.stack([torch.dot(x_i, query) for x_i in INPUTS])
+    print("attention scores:", scores)
 
-attn_weights_2 = torch.softmax(attn_scores_2, dim=0)
-print("Attention weights:", attn_weights_2)
-print("Sum:", attn_weights_2.sum())
+    # 2. Normalisation (naive, then the real softmax).
+    print("scores/sum    :", scores / scores.sum())
+    print("softmax_naive :", softmax_naive(scores))
+    weights = torch.softmax(scores, dim=0)
+    print("softmax       :", weights, "sum:", weights.sum().item())
 
-query = inputs[1] # 2nd input token is the query
+    # 3. Context vector = weighted sum of the inputs.
+    context_vec = torch.zeros(query.shape)
+    for i, x_i in enumerate(INPUTS):
+        context_vec += weights[i] * x_i
+    print("context vector:", context_vec)
 
-context_vec_2 = torch.zeros(query.shape)
-for i,x_i in enumerate(inputs):
-    context_vec_2 += attn_weights_2[i]*x_i
+    # 4. The same for all queries at once: (6,6) scores -> (6,3) contexts.
+    attn_scores = INPUTS @ INPUTS.T
+    attn_weights = torch.softmax(attn_scores, dim=-1)
+    print("attn_weights :", attn_weights, sep="\n")
+    print("row sums     :", attn_weights.sum(dim=-1))
+    print("all contexts :", attn_weights @ INPUTS, sep="\n")
 
-print(context_vec_2)
 
-inputs = torch.tensor(
-  [[0.43, 0.15, 0.89], # Your     (x^1)
-   [0.55, 0.87, 0.66], # journey  (x^2)
-   [0.57, 0.85, 0.64], # starts   (x^3)
-   [0.22, 0.58, 0.33], # with     (x^4)
-   [0.77, 0.25, 0.10], # one      (x^5)
-   [0.05, 0.80, 0.55], # step     (x^6)
-   [0.4419, 0.6515, 0.5683]]
-)
-
-# Corresponding words
-words = ['Your', 'journey', 'starts', 'with', 'one', 'step', 'journey-context']
-
-attn_scores = torch.empty(6, 6)
-
-for i, x_i in enumerate(inputs):
-    for j, x_j in enumerate(inputs):
-        attn_scores[i, j] = torch.dot(x_i, x_j)
-
-print(attn_scores)
-
-attn_scores = inputs @ inputs.T
-print(attn_scores)
-
-attn_weights = torch.softmax(attn_scores, dim=-1)
-print(attn_weights)
-
-row_2_sum = sum([0.1385, 0.2379, 0.2333, 0.1240, 0.1082, 0.1581])
-print("Row 2 sum:", row_2_sum)
-print("All row sums:", attn_weights.sum(dim=-1))
-
-all_context_vecs = attn_weights @ inputs
-print(all_context_vecs)
-
-print("Previous 2nd context vector:", context_vec_2)
+if __name__ == "__main__":
+    main()

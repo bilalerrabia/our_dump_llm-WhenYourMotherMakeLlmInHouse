@@ -1,7 +1,7 @@
 [project]
 name = "our-llm"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "A GPT built from scratch: corpus -> BPE -> GPT -> training -> sampling"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -25,4 +25,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+# "." so `from src.tokenizer import ...` (reference implementation) works,
+# "src" so `from our_llm... import ...` works even without the editable install.
+pythonpath = [".", "src"]
