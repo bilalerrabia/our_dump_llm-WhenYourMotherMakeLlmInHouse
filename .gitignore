@@ -2,3 +2,7 @@ __pycache__
 .venv
 to_fix.txt
 todo
+.env
+.scwiggy/
+parts/
+readme.secret.md

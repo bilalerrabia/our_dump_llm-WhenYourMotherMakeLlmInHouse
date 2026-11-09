@@ -1,35 +1,37 @@
-# import torch
-# import torch.nn as nn
+"""Pure-Python embedding layer (a minimal stand-in for torch.nn.Embedding)."""
 
-# class TokenPositionalEmbedding(nn.Module):
-#     """
-#     PyTorch module that handles both token and positional embeddings.
-#     """
-#     def __init__(self, vocab_size: int, output_dim: int, context_length: int):
-#         super().__init__()
-#         self.token_embedding = nn.Embedding(vocab_size, output_dim)
-#         self.positional_embedding = nn.Embedding(context_length, output_dim)
-
-#     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-#         """
-#         Inputs shape: (batch_size, seq_len)
-#         Returns shape: (batch_size, seq_len, output_dim)
-#         """
-#         # Get token embeddings
-#         token_emb = self.token_embedding(inputs)
-        
-#         # Get positional embeddings
-#         pos_indices = torch.arange(inputs.shape[1])
-#         pos_emb = self.positional_embedding(pos_emb)
-        
-#         # PyTorch automatically broadcasts the addition: 
-#         # (batch, seq, dim) + (seq, dim) -> (batch, seq, dim)
-#         return token_emb + pos_emb
-
+import math
 import random
 
-def get_shape(data):
-    """Helper to get the shape of a nested list (mimics tensor.shape)."""
+Matrix = list[list[float]]
+
+
+def sinusoidal_positional_encoding(
+    max_seq_len: int, d_model: int, base: float = 10000.0
+) -> Matrix:
+    """Fixed positional encoding from 'Attention Is All You Need' (eq. 3.5).
+
+    PE(pos, 2i)   = sin(pos / base^(2i/d_model))
+    PE(pos, 2i+1) = cos(pos / base^(2i/d_model))
+
+    Deterministic (no learned weights). Returns a (max_seq_len, d_model)
+    matrix, ready to be broadcast-added onto token embeddings.
+    """
+    # Angle rate per dimension; odd dims reuse the even dim's rate (2i / d_model)
+    angle_rates = [base ** (-2 * (i // 2) / d_model) for i in range(d_model)]
+
+    encoding: Matrix = []
+    for pos in range(max_seq_len):
+        row: list[float] = []
+        for i, rate in enumerate(angle_rates):
+            angle = pos * rate
+            row.append(math.sin(angle) if i % 2 == 0 else math.cos(angle))
+        encoding.append(row)
+    return encoding
+
+
+def get_shape(data) -> tuple[int, ...]:
+    """Return the shape of a nested list (mimics tensor.shape)."""
     shape = []
     d = data
     while isinstance(d, list):
@@ -39,37 +41,45 @@ def get_shape(data):
         d = d[0]
     return tuple(shape)
 
-def add_embeddings(token_emb, pos_emb):
+
+def add_embeddings(token_emb: list[Matrix], pos_emb: Matrix) -> list[Matrix]:
+    """Add token + positional embeddings with PyTorch-like broadcasting.
+
+    (batch, seq, dim) + (seq, dim) -> (batch, seq, dim)
     """
-    Adds token embeddings (3D list) and positional embeddings (2D list).
-    Mimics PyTorch's broadcasting: (batch, seq, dim) + (seq, dim) -> (batch, seq, dim)
-    """
-    result = []
+    result: list[Matrix] = []
     for batch in token_emb:
-        new_batch = []
+        new_batch: list[list[float]] = []
         for i, token_vec in enumerate(batch):
             new_vec = [t + p for t, p in zip(token_vec, pos_emb[i])]
             new_batch.append(new_vec)
         result.append(new_batch)
     return result
 
+
 class Embedding:
-    """Pure Python implementation of an Embedding layer."""
-    def __init__(self, vocab_size: int, output_dim: int):
+    """Lookup table mapping integer indices to learned float vectors."""
+
+    def __init__(self, vocab_size: int, output_dim: int) -> None:
         self.vocab_size = vocab_size
         self.output_dim = output_dim
-        self.weight = [
+        self.weight: Matrix = [
             [random.gauss(0.0, 1.0) for _ in range(output_dim)]
             for _ in range(vocab_size)
         ]
 
-    def __call__(self, indices):
-        if isinstance(indices, list) and len(indices) > 0 and isinstance(indices[0], int):
+    def __call__(self, indices: list | list[list[int]]) -> list:
+        """Return embeddings for a 1D or 2D list of integer indices."""
+        if self._is_1d(indices):
             return [self.weight[i] for i in indices]
-        elif isinstance(indices, list) and len(indices) > 0 and isinstance(indices[0], list):
-            return [
-                [self.weight[token_id] for token_id in seq]
-                for seq in indices
-            ]
-        else:
-            raise ValueError("Indices must be a 1D or 2D list of integers.")
+        if self._is_2d(indices):
+            return [[self.weight[token_id] for token_id in seq] for seq in indices]
+        raise ValueError("Indices must be a 1D or 2D list of integers.")
+
+    @staticmethod
+    def _is_1d(indices: list) -> bool:
+        return bool(indices) and isinstance(indices[0], int)
+
+    @staticmethod
+    def _is_2d(indices: list) -> bool:
+        return bool(indices) and isinstance(indices[0], list)

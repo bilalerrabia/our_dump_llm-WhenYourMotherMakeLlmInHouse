@@ -1,12 +1,11 @@
-test callme with gpt-2.
-optimasion callme.
-run callme with ourdump llm.
-13.37 M parameters.
+1337M parameters model.
 search for the DL or the LD for the function like the GELU bosalhi.
+wieghts loading video.
 simplified attention equation.
+
 AI exercices.
 
-use the position embedding from attention is all you need.
+
 data_test to dir/ not just one file.
         -> embedding hold the meaning about the words, but the attention hold the relations between the words.
         -> attention score calculate by the dot prodect.
@@ -15,4 +14,6 @@ data_test to dir/ not just one file.
 search about the torch implimentation of softmax.
 qkv_bias.
 type hints.
+read the whole book notes and transform it to readme.notes.
 make lint-strict.
+
