@@ -47,10 +47,11 @@ class GPTConfig:
 
         Token + positional embeddings, per block: QKV + out_proj + FFN + two
         LayerNorms, then the final LayerNorm and (unless tied) the output head.
+        Sinusoidal positions are a fixed buffer, so they cost nothing.
         """
         dim = self.emb_dim
         tok = self.vocab_size * dim
-        pos = self.context_length * dim
+        pos = 0 if self.pos_emb == "sinusoidal" else self.context_length * dim
 
         qkv_bias = dim if self.qkv_bias else 0
         attention = 3 * (dim * dim + qkv_bias) + (dim * dim + dim)
