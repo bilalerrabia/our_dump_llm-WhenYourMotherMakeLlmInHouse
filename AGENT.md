@@ -42,6 +42,18 @@ by the pipeline (ROADMAP D2).
   never empties train), `gather`, `prepare()` (corpus -> cached token file -> train/val
   arrays), `make_loader` / `build_loaders` (seeded `torch.Generator`; raises with a reason
   on an empty stream, torch itself refuses). `PreparedData` carries ids, docs, meta, tokenizer.
+- `model/layers.py` — M3. Hand-written `LayerNorm` (`scale`/`shift`, `unbiased=False`) and
+  tanh `GELU`, `FeedForward(emb_dim, expand=4, drop_rate=0.0)`; parity-tested against
+  `nn.LayerNorm` / `nn.GELU(approximate="tanh")` at 1e-6.
+- `model/attention.py` — M3. `MultiHeadAttention(d_in, d_out, context_length, dropout,
+  num_heads, qkv_bias=False, use_sdpa=False)`. Manual softmax path **and** `F.scaled_dot_product_attention`
+  path agree to 1e-6 (both tested); causal mask is a **non-persistent bool buffer** so it never
+  lands in a checkpoint; raises on `T > context_length`. 1-head + identity `out_proj` == legacy
+  `CausalAttention`.
+- `model/gpt.py` — M3. `GPTModel(cfg, use_sdpa=False)` (pre-norm blocks, `nn.ModuleList`,
+  GPT-2 init std 0.02 with residual projections `/sqrt(2L)`, init *before* tying), `TransformerBlock`,
+  `sinusoidal_positional_encoding` (fixed non-persistent buffer, **0 params**; `cfg.num_parameters()`
+  accounts for it). Also `model.num_parameters()` and `.cfg` stored for M4 checkpoints.
 - `examples/pure_python/pipeline_demo.py` — the old `main.py` walkthrough (slow on purpose).
 
 ## Layout — legacy reference modules (still tested)
@@ -56,7 +68,8 @@ by the pipeline (ROADMAP D2).
   `if __name__ == "__main__"`; previously `multi_head_attention.py` raised
   `NameError: batch` on import.
 - `src/LLM_arch/llm_class.py` — `DummyGPTModel`, `LayerNorm`, `GELU`, `FeedForward`,
-  `TransformerBlock` + GPT-2 124M cfg. To be replaced by `our_llm/model/` in M3.
+  `TransformerBlock` + GPT-2 124M cfg. **Superseded by `our_llm/model/` (M3)**; kept as the
+  reference the new code was ported from.
 - `main.py` — 5-line alias forwarding to the CLI (no args -> `tokenize`).
 
 ## Commands
@@ -66,8 +79,8 @@ by the pipeline (ROADMAP D2).
   `--no-tokens`, `--retrain`, `--vocab-cache`, `--cache-dir`, `--num-merges`.
 - `uv run our-llm tokenize --retrain` — full retrain, ~68 s for 14,970 merges
 - `make` (= sync + tokenize), `make test`, `make overfit` (M4), `make lint|fmt` (needs ruff)
-- `uv run pytest -q` — **179 passing** (test_config / test_tokenizer_v2 / test_corpus /
-  test_tokens / test_dataset + the legacy suites)
+- `uv run pytest -q` — **211 passing** (test_config / test_tokenizer_v2 / test_corpus /
+  test_tokens / test_dataset / test_model + the legacy suites); full suite ~1.5 s
 - Real data end-to-end: `build_loaders(DataConfig(), context_length=256)` -> 335 train
   windows / 41 batches, 39 val windows / 5 batches, 0.015 s startup
 - Deps: numpy, regex, torch, tqdm (+ pytest). Python >= 3.14, managed by uv.
@@ -79,7 +92,7 @@ History is one commit per milestone part, **each commit's tree must be green**
 against it). Order commits so that every import resolves at that commit:
 `tooling -> tokenizer -> core(config+corpus) -> data/tokens -> data/dataset -> cli -> docs`.
 Message style: `type(scope): imperative summary` (+ bullet body explaining *why*),
-types used so far: `chore`, `feat`, `docs`, `fix`. Commits through M2:
+types used so far: `chore`, `feat`, `docs`, `fix`. Commits through M3:
 
 ```
 7a8ed7d chore(tooling)   scaffolding + import-safe attention demos
@@ -89,6 +102,9 @@ types used so far: `chore`, `feat`, `docs`, `fix`. Commits through M2:
 7ff095d feat(data)       sliding-window dataset + doc split (M2b)
 f3f030e feat(cli)        tokenize writes the token file, reports the split
 6d2093d docs             M0-M2 recorded
+7bf2864 docs(agent)      git workflow: one green commit per part
+382bfae feat(model)      GPTModel, causal attention, layers (M3)
+<this>  docs             M3 recorded (audit, checklist, D17)
 ```
 `data/cache/` and `data/processed/` are gitignored: never commit token binaries.
 
@@ -135,8 +151,9 @@ val 9.856->6.372 (overfits a 20k-char story).
   ignores it (it was double-loading the book before).
 - `parts/` is **gitignored** — notebook knowledge must be copied into `notes/` to survive.
 - `python 3.14` + `torch` — if an op misbehaves, 3.14 is the first suspect.
-- `ROADMAP.md` holds the full pipeline plan + 16 architecture decisions (D1-D16) with rationale,
-  and the M0-M7 milestones (M0/M1/M2 done; M3 next). Change a decision by editing that table, not in code.
+- `ROADMAP.md` holds the full pipeline plan + 17 architecture decisions (D1-D17) with rationale,
+  and the M0-M7 milestones (M0-M3 done; M4 = loss + training loop is next). Change a decision by
+  editing that table, not in code.
 - `.env` holds an API key — never commit it.
 - Style: type hints, module docstrings, small pure functions. `todo.txt` tracks next steps
   (GELU derivative, lint-strict, README from notebook notes).

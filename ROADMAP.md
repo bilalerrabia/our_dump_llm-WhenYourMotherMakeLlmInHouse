@@ -16,16 +16,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done.
 | BPE train | `[x]` | `our_llm/tokenizer/bpe.py` | Fixed: 14,970 merges retrained on the real corpus in **68 s**, cached by fingerprint |
 | BPE encode | `[x]` | `our_llm/tokenizer/bpe.py` | Fixed: **0.08 s** for the whole corpus (was ~180 s); special tokens added |
 | Batching | `[x]` | `our_llm/data/dataset.py` | Fixed: torch tensors, memmapped token file, sentence-safe doc split, seeded loaders |
-| Embeddings | `[~]` | `src/embedding.py` | sinusoidal reference; model path uses learned (M3) |
-| Attention | `[x]` | `src/attentions/*.py` | Fixed: no import-time side effects; demos run under `__main__` |
-| GPT model | `[~]` | `src/LLM_arch/llm_class.py` | still `DummyGPTModel`; presets + `num_parameters()` exist in `config.py` (M3) |
+| Embeddings | `[x]` | `our_llm/model/gpt.py` | learned by default (`pos_emb`); sinusoidal is a fixed non-persistent buffer, 0 params |
+| Attention | `[x]` | `our_llm/model/attention.py` | causal MHA, manual + sdpa paths parity-tested; legacy demos stay in `src/attentions/` |
+| GPT model | `[x]` | `our_llm/model/gpt.py` | `GPTModel` (pre-norm blocks, tying, GPT-2 init); live count == `cfg.num_parameters()` = **13,039,872** |
 | Loss / perplexity | `[ ]` | — | only in `parts/LLM Loss function.ipynb` (M4) |
 | Train / val split | `[x]` | `our_llm/data/dataset.py` | Fixed: 90/10 by *document* (paragraph), never mid-sentence |
 | Training loop | `[ ]` | — | only in `parts/LLM Pretraining.ipynb` (M4) |
 | Checkpointing | `[ ]` | — | — (M4) |
 | Sampling | `[ ]` | — | only in notebooks (greedy + temperature) (M5) |
 | CLI / package | `[~]` | `our_llm/cli.py` | `tokenize` writes the token cache; `train`/`sample`/`eval` are stubs |
-| Tests | `[~]` | `tests/` | **179 passing**; tokenizer/corpus/config/tokens/dataset/legacy + old pure-Python suites |
+| Tests | `[~]` | `tests/` | **211 passing**; tokenizer/corpus/config/tokens/dataset/model/legacy + old pure-Python suites |
 | Docs / lint | `[ ]` | `README.md` | empty; no ruff/mypy/CI (M6) |
 
 ---
@@ -167,6 +167,22 @@ GitHub Actions running all three. `README.md` written from the notebook notes
 gitignore `data/processed/`, `runs/`, `data/cache/`. `parts/` is already gitignored — copy the
 few cells we actually port into `notes/` so the reasoning survives outside a 500-cell notebook.
 
+### D17 — M3 implementation details
+**Decision.**
+- **Compute choice is a constructor argument, architecture is config.** `GPTModel(cfg, use_sdpa=False)`
+  — sdpa vs manual produces identical logits, so it must not appear in a checkpoint's config.
+- **Derived state stays out of checkpoints.** The causal mask and the sinusoidal table are
+  `persistent=False` buffers: recomputed on creation, so a `.pt` holds only learned tensors and
+  no `context_length`-shaped junk.
+- **Init before tying.** `apply(_init_weights)` first, then `out_head.weight = tok_emb.weight`,
+  then the residual scaling — otherwise the Linear init would overwrite the shared embedding.
+- **Residual dropout lives in the block** (`drop_shortcut`) around `att` and `ff`, and `FeedForward`
+  keeps its internal dropout at 0 by default, so dropout is applied once per sub-layer, not twice.
+- **Sinusoidal positions cost zero parameters**, so `GPTConfig.num_parameters()` returns
+  `0` for `pos` when `pos_emb == "sinusoidal"`; the live model and the formula still agree.
+**Why.** These four are the places where a checkpoint silently changes meaning (or a param count
+silently drifts) if done differently. Tests pin all of them in `tests/test_model.py`.
+
 ---
 
 ## 2. Target file layout
@@ -227,12 +243,18 @@ tests/                   # mirrors src tree
 - [x] `dataset.py`: torch sliding-window dataset, tensors, 90/10 doc-level split, seeded loaders
 - [x] Tests: window shift, no train/val leakage, memmap round-trip (179 passing total)
 
-### M3 — Model (2–3 days)
-- [ ] `layers.py` (LayerNorm, GELU, FFN) + equivalence tests
-- [ ] `attention.py` `MultiHeadAttention` (mask buffer, dropout, qkv_bias, sdpa) + 1-head parity test
-- [ ] `gpt.py` `GPTModel`: tok/pos emb, `n_layers` blocks, final norm, `out_head`, tying, init
-- [ ] `count_parameters()` == 13.37 M for `tiny` (pinned test)
-- [ ] Forward-shape test: `(B,T)` → `(B,T,vocab)`
+### M3 — Model — **done**
+- [x] `model/layers.py`: hand-written `LayerNorm` (biased var, scale/shift) and tanh `GELU`,
+      `FeedForward` (4x expand) — each checked against `nn.LayerNorm` / `nn.GELU(approximate="tanh")`
+- [x] `model/attention.py`: `MultiHeadAttention` with causal mask (non-persistent bool buffer),
+      dropout, `qkv_bias`, and `use_sdpa` — manual and sdpa paths agree to 1e-6
+- [x] 1-head parity: equals legacy `CausalAttention` once `out_proj` is the identity
+- [x] `model/gpt.py`: `GPTModel` = tok/pos emb + `n_layers` pre-norm blocks + final norm + `out_head`,
+      weight tying, and GPT-2 init (std 0.02, residual projections / sqrt(2L))
+- [x] `pos_emb="sinusoidal"` works and costs **0** parameters (`cfg.num_parameters()` updated)
+- [x] `count_parameters(model)` == `cfg.num_parameters()`: debug 1,078,400 / tiny **13,039,872**
+- [x] Forward-shape test `(B,T)` -> `(B,T,vocab)`; context overflow, bad rank, causality all tested
+- [x] Tests: 32 new in `tests/test_model.py` (211 passing total)
 
 ### M4 — Loss + loop (2 days)
 - [ ] `loss.py`: cross-entropy + perplexity + `calc_loss_loader`
