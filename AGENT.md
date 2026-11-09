@@ -73,6 +73,25 @@ by the pipeline (ROADMAP D2).
 - Deps: numpy, regex, torch, tqdm (+ pytest). Python >= 3.14, managed by uv.
 - `tiktoken`, `matplotlib`, `pandas`, `ruff`, `mypy` are **not installed**.
 
+## Git workflow
+History is one commit per milestone part, **each commit's tree must be green**
+(verified by checking out the commit in a temp `git worktree` and running pytest
+against it). Order commits so that every import resolves at that commit:
+`tooling -> tokenizer -> core(config+corpus) -> data/tokens -> data/dataset -> cli -> docs`.
+Message style: `type(scope): imperative summary` (+ bullet body explaining *why*),
+types used so far: `chore`, `feat`, `docs`, `fix`. Commits through M2:
+
+```
+7a8ed7d chore(tooling)   scaffolding + import-safe attention demos
+7f0be76 feat(tokenizer)  fast BPE, frozen ids, versioned cache
+74d4e08 feat(core)       config presets, utils, corpus reader
+1044187 feat(data)       memmapped uint16 token file (M2a)
+7ff095d feat(data)       sliding-window dataset + doc split (M2b)
+f3f030e feat(cli)        tokenize writes the token file, reports the split
+6d2093d docs             M0-M2 recorded
+```
+`data/cache/` and `data/processed/` are gitignored: never commit token binaries.
+
 ## `parts/` — reference notebooks (book source material, NOT project code)
 `parts/LLM Loss function.ipynb` (513 cells) and `parts/LLM Pretraining.ipynb` (558 cells).
 Their first ~4,200 extracted lines are **byte-identical**: both are the *Build a LLM from Scratch*
