@@ -12,21 +12,21 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done.
 
 | Stage | Status | Where | Broken / missing |
 |---|---|---|---|
-| Read corpus | `[x]` | `main.py:read_data` | `data/` holds **2 copies** of Frankenstein (`dd.txt` + `gg`, extensionless) → corpus loaded twice; `DATA_EXTENSIONS` unused |
-| BPE train | `[x]` | `src/tokenizer.py` | 14,970 merges in cache (vocab 15,226), trained on an older corpus; cache never invalidated |
-| BPE encode | `[x]` | `src/tokenizer.py:encode` | **0.83 s / 2,000 chars** (replays all merges) → ~3 min per full run; no special tokens |
-| Batching | `[x]` | `src/data_loader.py` | pure-Python lists, no tensors, no train/val split |
-| Embeddings | `[x]` | `src/embedding.py` | sinusoidal; the model path uses learned (inconsistent) |
-| Attention | `[x]` | `src/attentions/*.py` | demo code runs at import; `multi_head_attention.py:65` → `NameError: batch` |
-| GPT model | `[~]` | `src/LLM_arch/llm_class.py` | only `DummyGPTModel`/`DummyTransformerBlock`; `vocab_size` hardcoded 50257 |
-| Loss / perplexity | `[ ]` | — | only in `parts/LLM Loss function.ipynb` |
-| Train / val split | `[ ]` | — | — |
-| Training loop | `[ ]` | — | only in `parts/LLM Pretraining.ipynb` |
-| Checkpointing | `[ ]` | — | — |
-| Sampling | `[ ]` | — | only in notebooks (greedy + temperature) |
-| CLI / package | `[~]` | `src/our_llm/__init__.py` | "Hello from our-llm!" stub |
-| Tests | `[~]` | `tests/` | 53 passing, covers tokenizer/dataset/embedding only |
-| Docs / lint | `[ ]` | `README.md` | empty; no ruff/mypy/CI |
+| Read corpus | `[x]` | `our_llm/data/corpus.py` | Fixed: extension filter excludes the `data/gg` duplicate; documents kept as split boundaries |
+| BPE train | `[x]` | `our_llm/tokenizer/bpe.py` | Fixed: 14,970 merges retrained on the real corpus in **68 s**, cached by fingerprint |
+| BPE encode | `[x]` | `our_llm/tokenizer/bpe.py` | Fixed: **0.08 s** for the whole corpus (was ~180 s); special tokens added |
+| Batching | `[x]` | `our_llm/data/dataset.py` | Fixed: torch tensors, memmapped token file, sentence-safe doc split, seeded loaders |
+| Embeddings | `[~]` | `src/embedding.py` | sinusoidal reference; model path uses learned (M3) |
+| Attention | `[x]` | `src/attentions/*.py` | Fixed: no import-time side effects; demos run under `__main__` |
+| GPT model | `[~]` | `src/LLM_arch/llm_class.py` | still `DummyGPTModel`; presets + `num_parameters()` exist in `config.py` (M3) |
+| Loss / perplexity | `[ ]` | — | only in `parts/LLM Loss function.ipynb` (M4) |
+| Train / val split | `[x]` | `our_llm/data/dataset.py` | Fixed: 90/10 by *document* (paragraph), never mid-sentence |
+| Training loop | `[ ]` | — | only in `parts/LLM Pretraining.ipynb` (M4) |
+| Checkpointing | `[ ]` | — | — (M4) |
+| Sampling | `[ ]` | — | only in notebooks (greedy + temperature) (M5) |
+| CLI / package | `[~]` | `our_llm/cli.py` | `tokenize` writes the token cache; `train`/`sample`/`eval` are stubs |
+| Tests | `[~]` | `tests/` | **179 passing**; tokenizer/corpus/config/tokens/dataset/legacy + old pure-Python suites |
+| Docs / lint | `[ ]` | `README.md` | empty; no ruff/mypy/CI (M6) |
 
 ---
 
@@ -107,10 +107,11 @@ not the model.
 | `gpt2-small` | 1024 | 768 | 12 | 12 | 50,257 | 163 M |
 
 `todo.txt` line 1 says **13.37 M**. `tiny` as specced above (tied, vocab 15,228, ctx 256,
-D=384, L=4, heads 6) computes to **13,044,480** exactly
-(`15228*384 + 256*384 + 4*1,774,464 + 768`); tune one dim (ctx or `n_heads`-free D) to reach
-13.37 M and pin the result with a test (`count_parameters() == 13_37x_xxx`).
-Untied `out_head` would instead add `V*D` ≈ 5.85 M → ~18.9 M.
+D=384, L=4, heads 6) measures **13,039,872** — verified by `GPTConfig.num_parameters()`
+and pinned in `tests/test_config.py`. Hitting exactly 13.37 M needs one dim retuned
+(e.g. ctx 1,116); low priority, but keep the pinned number in sync if the preset changes.
+Untied `out_head` would instead add `V*D` = 5,847,552 → 18,887,424.
+For reference: `gpt2-small` measures 124,412,160 and `debug` 1,078,400.
 **Why.** A parameter count is the cheapest end-to-end correctness signal we have.
 `vocab_size` must come from the tokenizer, never be hardcoded.
 
@@ -201,25 +202,30 @@ tests/                   # mirrors src tree
 
 ## 3. Phased plan
 
-### M0 — Clean slate (½ day)
-- [ ] Delete `data/gg`; fix or remove `DATA_EXTENSIONS` in the corpus reader
-- [ ] Create `src/our_llm/` skeleton + `config.py` with the 3 presets
-- [ ] Remove `sys.path` hack; `Makefile`: `make tokenize|train|sample|test|lint`
-- [ ] Delete module-level demo code from `src/attentions/*` (move to `examples/`)
-- [ ] `.gitignore`: `data/processed/`, `runs/`, `data/cache/`
+### M0 — Clean slate (½ day) — **done**
+- [x] Stop the double-load: `our_llm/data/corpus.py` filters by extension (kept `data/gg`
+      on disk rather than deleting user data; it is now simply ignored)
+- [x] Create `our_llm/` skeleton + `config.py` with the 3 presets
+- [x] Remove the `sys.path` hack: `main.py` is now a 5-line alias for `our-llm`
+- [x] `Makefile`: `make tokenize|train|sample|test|overfit|lint|fmt`
+- [x] Move the old pipeline demo to `examples/pure_python/pipeline_demo.py`
+- [x] Delete module-level demo code from `src/attentions/*` (now import-safe; `NameError` gone)
+- [x] `.gitignore`: `data/cache/`, `data/processed/`, `runs/`, tool caches
 
-### M1 — Tokenizer v2 (1–2 days)
-- [ ] Port `src/tokenizer.py` → `our_llm/tokenizer/bpe.py`, fix O(N) encode with merge ranks
-- [ ] Add `<|endoftext|>` / `<|pad|>`; `vocab_size = 258 + len(merges)`
-- [ ] Versioned cache keyed by `sha256(corpus)+num_merges`
-- [ ] Benchmark: full-corpus encode < 5 s (currently ~3 min)
-- [ ] Tests: round-trip incl. specials + UTF-8, cache reuse, vocab-size math
+### M1 — Tokenizer v2 (1–2 days) — **done**
+- [x] `our_llm/tokenizer/bpe.py`: rank-based encode + per-word memoisation
+      (**0.08 s** for 438 KB, down from ~180 s — ~2000x)
+- [x] `<|endoftext|>` (256) / `<|pad|>` (257), merges from 258; `vocab_size = 258 + merges`
+- [x] Versioned cache `data/cache/vocab-<corpus_sha16>-m<merges>.json` + legacy migration on load
+- [x] Full retrain on the real corpus: 68 s → `vocab-905e38dc26f492e1-m14970.json`
+- [x] Tests: 52 new (round-trip incl. UTF-8/specials, fast-vs-slow equivalence,
+      merge-for-merge parity with `src/tokenizer.py`, cache keying, legacy migration)
 
-### M2 — Data pipeline (1 day)
-- [ ] `corpus.py`: reader with extension filter + document splitting
-- [ ] `tokens.py`: `our-llm tokenize` → `uint16` `.bin` + meta (hash, n_tokens, docs)
-- [ ] `dataset.py`: torch sliding-window dataset, tensors, 90/10 doc-level split
-- [ ] Tests: window shift, no train/val leakage, memmap round-trip
+### M2 — Data pipeline (done)
+- [x] `corpus.py`: reader with extension filter + document boundaries (`--granularity file|paragraph`)
+- [x] `tokens.py`: `our-llm tokenize` → `uint16` `.bin` + `.meta.json` (corpus/structure/vocab hashes, n_tokens, doc spans)
+- [x] `dataset.py`: torch sliding-window dataset, tensors, 90/10 doc-level split, seeded loaders
+- [x] Tests: window shift, no train/val leakage, memmap round-trip (179 passing total)
 
 ### M3 — Model (2–3 days)
 - [ ] `layers.py` (LayerNorm, GELU, FFN) + equivalence tests

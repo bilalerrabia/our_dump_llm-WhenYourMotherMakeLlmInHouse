@@ -1,3 +1,5 @@
+-> full pipeline plan + decisions: ROADMAP.md  (M0 + M1 + M2 done: our_llm package, fast BPE,
+  token file + torch dataset; M3 = the real GPTModel is next)
 1337M parameters model.
 search for the DL or the LD for the function like the GELU bosalhi.
 wieghts loading video.
@@ -6,7 +8,7 @@ simplified attention equation.
 AI exercices.
 
 
-data_test to dir/ not just one file.
+data_test to dir/ not just one file.  [done: --granularity paragraph + doc-level split]
         -> embedding hold the meaning about the words, but the attention hold the relations between the words.
         -> attention score calculate by the dot prodect.
         -> Attention weights = softmax(attention scores).
