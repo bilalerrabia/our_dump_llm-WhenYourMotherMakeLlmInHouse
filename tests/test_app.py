@@ -112,8 +112,9 @@ class TestValidateFlags:
 
 class TestMain:
     def test_not_implemented_stage_exits_one_without_a_traceback(self, capsys):
+        # `sample` is the one stage left for M5; it must not print a traceback.
         with pytest.raises(SystemExit) as info:
-            main(["train", "--preset", "debug"])
+            main(["sample", "--ckpt", "runs/missing.pt"])
         assert info.value.code == 1
         assert "not implemented yet" in capsys.readouterr().err
 

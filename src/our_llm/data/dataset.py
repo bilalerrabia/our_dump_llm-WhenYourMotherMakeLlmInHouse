@@ -132,11 +132,17 @@ def prepare(
     config: DataConfig | None = None,
     tokenizer: BPETokenizer | None = None,
     force: bool = False,
+    token_file: str | None = None,
 ) -> PreparedData:
     """Corpus -> (cached) token file -> train/val arrays.
 
     Encoding happens only when the token file is missing or ``force`` is set, so
     repeated runs start in milliseconds.
+
+    ``token_file`` points at a file produced by another directory/config (the
+    `pipeline` hands the tokenize stage's output straight to `train`); when it is
+    given, that file is read instead of recomputing the conventional path. It is
+    still checked against the tokenizer, so a mismatched vocabulary fails loudly.
     """
     config = config or DataConfig()
     corpus = read_corpus(config.corpus_path, config.extensions, granularity=config.granularity)
@@ -150,7 +156,7 @@ def prepare(
         show_progress=False,
         key=corpus.files_hash or corpus.fingerprint,
     )
-    path = token_file_path(
+    path = token_file or token_file_path(
         config.processed_dir, corpus.structure_fingerprint, tokenizer.num_merges
     )
 
@@ -218,10 +224,17 @@ def build_loaders(
     context_length: int = 256,
     tokenizer: BPETokenizer | None = None,
     force: bool = False,
+    prepared: PreparedData | None = None,
+    token_file: str | None = None,
 ) -> tuple[DataLoader, DataLoader | None, PreparedData]:
-    """Train loader, validation loader (``None`` if the split is empty) and the data."""
+    """Train loader, validation loader (``None`` if the split is empty) and the data.
+
+    Pass ``prepared`` when the caller already ran :func:`prepare` (the training
+    stage needs the vocabulary size *before* it knows the model shape); pass
+    ``token_file`` to load a specific token file instead of the conventional one.
+    """
     config = config or DataConfig()
-    prepared = prepare(config, tokenizer=tokenizer, force=force)
+    prepared = prepared or prepare(config, tokenizer=tokenizer, force=force, token_file=token_file)
     stride = config.stride or context_length
 
     train_loader = make_loader(

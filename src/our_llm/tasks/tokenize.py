@@ -92,7 +92,7 @@ def pick_tokenizer(
         legacy = BPETokenizer.load(LEGACY_CACHE)
         # Only a drop-in replacement when the merge count matches what was asked
         # for -- otherwise every downstream checkpoint would have the wrong vocab.
-        if legacy.num_merges == num_merges:
+        if legacy.satisfies(num_merges):
             return legacy, (
                 f"loaded from {LEGACY_CACHE} (legacy file, merges shifted to the 258+ "
                 f"layout; use --retrain for a corpus-matched vocabulary)"

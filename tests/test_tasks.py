@@ -7,6 +7,7 @@ selection is order-safe, and `pipeline` reports ok/skipped/failed correctly.
 """
 
 import inspect
+import math
 import os
 from pathlib import Path
 
@@ -38,6 +39,20 @@ def corpus_file(tmp_path):
     path = tmp_path / "data" / "small.txt"
     path.parent.mkdir()
     path.write_text(CORPUS, encoding="utf-8")
+    return str(path.parent)
+
+
+@pytest.fixture()
+def training_corpus(tmp_path):
+    """Enough text for the debug preset: >= one 64-token window per split."""
+    paragraph = (
+        "The monster opened its eyes and saw the night, and the night was cold. "
+        "It was on a dreary night of November that I beheld my work. "
+        "Learn from me, if not by my precepts, at least by my example. "
+    )
+    path = tmp_path / "training" / "novel.txt"
+    path.parent.mkdir()
+    path.write_text("\n\n".join(paragraph * 2 for _ in range(60)), encoding="utf-8")
     return str(path.parent)
 
 
@@ -213,18 +228,112 @@ class TestTrainTokenizerStage:
 
 
 class TestUnimplementedStages:
-    def test_train_raises_with_the_milestone_and_the_size(self):
-        with pytest.raises(NotImplementedError, match="M4") as info:
-            train(preset="debug")
-        assert "1,078,400 parameters" in str(info.value)
-
-    def test_evaluate_raises(self):
-        with pytest.raises(NotImplementedError, match="M4"):
-            evaluate(ckpt="runs/best.pt")
-
     def test_sample_raises(self):
         with pytest.raises(NotImplementedError, match="M5"):
             sample(ckpt="runs/best.pt")
+
+
+# --- training / evaluation (M4) ---------------------------------------------
+
+
+@pytest.fixture()
+def train_kwargs(training_corpus, tmp_path):
+    """One-epoch debug run in a throwaway directory; cheap enough to run per test."""
+    return dict(
+        corpus=training_corpus,
+        num_merges=40,
+        preset="debug",
+        epochs=1,
+        quiet=True,
+        cache_dir=str(tmp_path / "cache"),
+        processed_dir=str(tmp_path / "processed"),
+        run_dir=str(tmp_path / "runs"),
+    )
+
+
+class TestTrainStage:
+    def test_returns_the_best_checkpoint_and_writes_the_run(self, train_kwargs):
+        path = train(**train_kwargs)
+        assert path.endswith("best.pt")
+        assert os.path.exists(path)
+
+        run_dir = os.path.dirname(path)
+        assert os.path.exists(os.path.join(run_dir, "last.pt"))
+        assert os.path.exists(os.path.join(run_dir, "metrics.csv"))
+        with open(os.path.join(run_dir, "metrics.csv"), encoding="utf-8") as handle:
+            assert handle.readline().startswith("step,epoch,train_loss,val_loss")
+
+    def test_the_checkpoint_knows_its_vocabulary_and_config(self, train_kwargs):
+        from our_llm.train.checkpoint import load_checkpoint
+
+        checkpoint = load_checkpoint(train(**train_kwargs))
+        assert checkpoint.cfg.vocab_size == 258 + 40  # taken from the tokenizer
+        assert checkpoint.num_merges == 40
+        assert checkpoint.vocab_fingerprint
+        assert checkpoint.step > 0
+        assert os.path.getsize(checkpoint.path) > 0
+
+    def test_it_can_train_from_another_stage_token_file(self, train_kwargs, tmp_path):
+        tokenized = tokenize(
+            corpus=train_kwargs["corpus"],
+            num_merges=train_kwargs["num_merges"],
+            cache_dir=train_kwargs["cache_dir"],
+            processed_dir=str(tmp_path / "elsewhere"),
+            quiet=True,
+        )
+        path = train(**train_kwargs, token_file=tokenized.token_file)
+        assert os.path.exists(path)
+
+    def test_a_corpus_too_small_for_one_window_says_so(self, tmp_path):
+        tiny = tmp_path / "tiny"
+        tiny.mkdir()
+        (tiny / "one.txt").write_text("Hello world.", encoding="utf-8")
+        with pytest.raises(ValueError, match="no samples"):
+            train(
+                corpus=str(tiny),
+                num_merges=40,
+                preset="debug",
+                epochs=1,
+                quiet=True,
+                cache_dir=str(tmp_path / "cache"),
+                processed_dir=str(tmp_path / "processed"),
+                run_dir=str(tmp_path / "runs"),
+            )
+
+
+class TestEvaluateStage:
+    def test_reports_loss_and_perplexity_for_both_splits(self, train_kwargs):
+        from our_llm.tasks import EvalResult
+
+        path = train(**train_kwargs)
+        result = evaluate(
+            ckpt=path,
+            corpus=train_kwargs["corpus"],
+            cache_dir=train_kwargs["cache_dir"],
+            processed_dir=train_kwargs["processed_dir"],
+            quiet=True,
+        )
+        assert isinstance(result, EvalResult)
+        assert result.train_loss is not None and result.train_loss > 0
+        assert result.val_loss is not None and result.val_loss > 0
+        assert result.train_perplexity == pytest.approx(math.exp(result.train_loss))
+        assert "ppl" in str(result)
+
+    def test_one_split_only(self, train_kwargs):
+        path = train(**train_kwargs)
+        result = evaluate(
+            ckpt=path,
+            corpus=train_kwargs["corpus"],
+            cache_dir=train_kwargs["cache_dir"],
+            processed_dir=train_kwargs["processed_dir"],
+            split="val",
+            quiet=True,
+        )
+        assert result.train_loss is None and result.val_loss is not None
+
+    def test_unknown_split_is_rejected_before_touching_the_disk(self):
+        with pytest.raises(ValueError, match="split must be one of"):
+            evaluate(ckpt="does-not-exist.pt", split="test")
 
 
 # --- stage selection --------------------------------------------------------
@@ -280,12 +389,13 @@ class TestPipeline:
         assert report[0].value.trained
         assert report[0].value.vocab_size == 258 + 40
 
-    def test_train_everything_learns_merges_then_tokens(self, corpus_file, tmp_path):
+    def test_train_everything_learns_merges_then_tokens(self, training_corpus, tmp_path):
         """`--stages all` is the two training stages plus the data in between."""
         report = pipeline(
-            corpus=corpus_file,
+            corpus=training_corpus,
             num_merges=40,
             preset="debug",
+            epochs=1,
             stages="tokenizer,tokenize,train",
             cache_dir=str(tmp_path / "cache"),
             processed_dir=str(tmp_path / "processed"),
@@ -296,7 +406,8 @@ class TestPipeline:
         assert report[0].value.trained is True  # stage 0 really trained the BPE
         assert report[1].status == "ok"
         assert report[1].value.vocab_size == report[0].value.vocab_size
-        assert report[2].status == "skipped"  # the GPT loop lands in M4
+        assert report[2].status == "ok"  # the GPT checkpoint comes back
+        assert report[2].detail.endswith("best.pt")
 
     def test_retrain_vocab_forces_the_merges_again(self, corpus_file, tmp_path):
         kwargs = dict(
@@ -326,11 +437,12 @@ class TestPipeline:
         assert report[0].status == "ok"
         assert report.ok == 1 and report.failed == 0
 
-    def test_full_run_skips_the_unbuilt_stages(self, corpus_file, tmp_path):
+    def test_full_run_trains_then_skips_only_sampling(self, training_corpus, tmp_path):
         report = pipeline(
-            corpus=corpus_file,
+            corpus=training_corpus,
             num_merges=40,
             preset="debug",
+            epochs=1,
             stages="all",
             cache_dir=str(tmp_path / "cache"),
             processed_dir=str(tmp_path / "processed"),
@@ -340,10 +452,9 @@ class TestPipeline:
         statuses = {outcome.name: outcome.status for outcome in report}
         assert statuses["train-tokenizer"] == "ok"
         assert statuses["tokenize"] == "ok"
-        # train is not built yet, so eval/sample have no checkpoint to consume
-        assert statuses["train"] == "skipped"
-        assert statuses["eval"] == "skipped"
-        assert statuses["sample"] == "skipped"
+        assert statuses["train"] == "ok"
+        assert statuses["eval"] == "ok"  # it consumed the checkpoint train produced
+        assert statuses["sample"] == "skipped"  # M5 has not landed yet
         assert report.failed == 0
         assert len(report) == len(STAGES)
         assert "skipped" in str(report)

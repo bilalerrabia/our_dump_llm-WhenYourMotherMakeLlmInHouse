@@ -206,6 +206,30 @@ class TestCacheKeying:
         other = load_or_train(text, 10, cache_dir=str(tmp_path), show_progress=False)
         assert other.num_merges == 10
 
+    def test_a_cache_is_reused_even_when_training_stopped_early(self, tmp_path):
+        """`num_merges` is a ceiling: the corpus runs out of pairs before it.
+
+        Comparing `loaded.num_merges` to the request made every run retrain the
+        same vocabulary (68 s for the real corpus); the *requested* count is what
+        says whether a cache is the right one.
+        """
+        text = SAMPLE * 20
+        first = load_or_train(text, 10_000, cache_dir=str(tmp_path), show_progress=False)
+        assert first.num_merges < 10_000  # stopped early ...
+        assert first.satisfies(10_000)  # ... but this is the cache for that request
+
+        path = tokenizer_cache_path(str(tmp_path), corpus_hash(text), 10_000)
+        mtime = os.path.getmtime(path)
+        second = load_or_train(text, 10_000, cache_dir=str(tmp_path), show_progress=False)
+        assert second.merges == first.merges
+        assert os.path.getmtime(path) == mtime  # loaded, not retrained
+
+    def test_the_requested_count_survives_a_save_load_round_trip(self, tmp_path):
+        tokenizer = BPETokenizer().train(SAMPLE * 20, 10_000, show_progress=False)
+        path = str(tmp_path / "vocab.json")
+        tokenizer.save(path)
+        assert BPETokenizer.load(path).requested_merges == 10_000
+
 
 class TestReadableVocab:
     def test_contains_bytes_specials_and_merges(self, trained):

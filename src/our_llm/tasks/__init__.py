@@ -14,7 +14,7 @@ Each stage lives in its own file so it can be read, imported and tested on its
 own; nothing here imports torch, so `import our_llm.tasks` stays cheap.
 """
 
-from our_llm.tasks.evaluate import evaluate
+from our_llm.tasks.evaluate import EvalResult, evaluate
 from our_llm.tasks.pipeline import STAGES, PipelineReport, StageOutcome, parse_stages, pipeline
 from our_llm.tasks.sample import sample
 from our_llm.tasks.tokenize import TokenizeResult, pick_tokenizer, tokenize
@@ -37,6 +37,7 @@ COMMANDS: dict[str, object] = {
 __all__ = [
     "COMMANDS",
     "STAGES",
+    "EvalResult",
     "PipelineReport",
     "StageOutcome",
     "TokenizeResult",

@@ -58,6 +58,11 @@ class BPETokenizer:
         self.pat = PRE_TOKENIZE_PATTERN
         self.merges: dict[int, tuple[int, int]] = dict(merges or {})
         self.special_ids: dict[str, int] = dict(SPECIAL_IDS)
+        #: How many merges were *asked for*, which can exceed ``num_merges``:
+        #: training stops as soon as no pair is left to merge. Comparing the
+        #: requested count is what makes a cached vocabulary reusable instead of
+        #: silently retraining the same thing on every run.
+        self.requested_merges: int = len(self.merges)
         self._ranks: dict[tuple[int, int], int] = {
             pair: new_id for new_id, pair in self.merges.items()
         }
@@ -69,6 +74,10 @@ class BPETokenizer:
     @property
     def num_merges(self) -> int:
         return len(self.merges)
+
+    def satisfies(self, num_merges: int) -> bool:
+        """True when this vocabulary *is* the result of training ``num_merges`` merges."""
+        return self.requested_merges == num_merges
 
     @property
     def vocab_size(self) -> int:
@@ -207,6 +216,7 @@ class BPETokenizer:
         self._ranks.clear()
         self._bytes_cache.clear()
         self._word_cache.clear()
+        self.requested_merges = num_merges
 
         word_counts = Counter(tuple(word) for word in self.encoder(text))
         words = [list(word) for word in word_counts]
@@ -269,6 +279,7 @@ class BPETokenizer:
                 "merge_start": MERGE_START,
                 "special_tokens": list(SPECIAL_TOKENS),
                 "num_merges": len(self.merges),
+                "requested_merges": max(self.requested_merges, len(self.merges)),
                 "vocab_size": self.vocab_size,
             },
             "merges": {str(k): list(v) for k, v in sorted(self.merges.items())},
@@ -282,7 +293,11 @@ class BPETokenizer:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
         raw = data.get("merges", data) if isinstance(data, dict) else {}
-        return cls(cls._normalise_merges(raw))
+        tokenizer = cls(cls._normalise_merges(raw))
+        meta = data.get("_meta") if isinstance(data, dict) else None
+        if isinstance(meta, dict) and "requested_merges" in meta:
+            tokenizer.requested_merges = int(meta["requested_merges"])
+        return tokenizer
 
     @staticmethod
     def _normalise_merges(raw: dict) -> dict[int, tuple[int, int]]:
@@ -319,7 +334,7 @@ def load_or_train(
     path = tokenizer_cache_path(cache_dir, key or corpus_hash(text), num_merges)
     if os.path.exists(path):
         tokenizer = BPETokenizer.load(path)
-        if tokenizer.num_merges == num_merges:
+        if tokenizer.satisfies(num_merges):
             return tokenizer
     tokenizer = BPETokenizer().train(text, num_merges, show_progress=show_progress)
     tokenizer.save(path)

@@ -82,7 +82,7 @@ def train_tokenizer(
 
     if os.path.exists(path) and not retrain:
         tokenizer = BPETokenizer.load(path)
-        if tokenizer.num_merges != num_merges:  # the cache name says otherwise; trust nothing
+        if not tokenizer.satisfies(num_merges):  # the cache name says otherwise; trust nothing
             trained = True
             tokenizer = _learn(corpus_data, num_merges, path, quiet)
             seconds = time.perf_counter() - start
